@@ -1,25 +1,32 @@
 const { Sequelize } = require("sequelize");
+const fs = require("fs");
 require("dotenv").config();
 
-// ✅ Initialize Sequelize
+// ✅ Load SSL CA cert if DB_SSL is true
+const sslOptions = process.env.DB_SSL === "true"
+  ? {
+      ssl: {
+        rejectUnauthorized: true,
+        ca: fs.readFileSync("certs/ca.pem")
+      }
+    }
+  : {};
+
 const sequelize = new Sequelize(
   process.env.DB_NAME,
   process.env.DB_USER,
   process.env.DB_PASS,
   {
     host: process.env.DB_HOST,
-    port: process.env.DB_PORT,
+    port: parseInt(process.env.DB_PORT, 10),
     dialect: "mysql",
-    dialectOptions: {
-      ssl: process.env.DB_SSL === "true" ? { rejectUnauthorized: false } : false,
-    },
-    logging: false, // Disable query logging in production
+    dialectOptions: sslOptions,
+    logging: console.log, // set to false in production
   }
 );
 
-// ✅ Test Database Connection
 sequelize.authenticate()
-  .then(() => console.log("✅ MySQL Database Connected"))
-  .catch(err => console.error("❌ Database Connection Error:", err));
+  .then(() => console.log("✅ MySQL Database Connected successfully"))
+  .catch(err => console.error("❌ Database Connection Error:", err.message));
 
 module.exports = { sequelize };
