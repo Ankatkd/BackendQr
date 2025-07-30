@@ -3,6 +3,7 @@ const User = require("../models/user.model");
 const Otp = require("../models/otp.model");
 const bcrypt = require("bcryptjs");
 const otpGenerator = require("otp-generator");
+const jwt = require('jsonwebtoken'); // NEW: Import jsonwebtoken
 require('dotenv').config();
 
 const { Vonage } = require('@vonage/server-sdk');
@@ -30,8 +31,9 @@ exports.requestOtp = async (req, res) => {
       lowerCaseAlphabets: false,
       specialChars: false,
     });
-    const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
+    const expiresAt = new Date(Date.now() + 5 * 60 * 1000); // OTP valid for 5 minutes
 
+    // Use upsert to create or update the OTP record for the phone number
     await Otp.upsert(
       { phoneNumber, otpCode, expiresAt },
       { where: { phoneNumber } }
@@ -40,6 +42,13 @@ exports.requestOtp = async (req, res) => {
     const toPhoneNumberE164 = `+91${phoneNumber}`; 
     const fromPhoneNumber = VONAGE_PHONE_NUMBER;
     const smsText = `Your OTP for QRMenu is: ${otpCode}. It expires in 5 minutes.`;
+
+    // Ensure Vonage API key/secret are configured
+    if (!fromPhoneNumber || !vonage.apiKey || !vonage.apiSecret) {
+        console.warn('Vonage API credentials not fully configured. OTP not sent via SMS.');
+        console.log(`OTP for ${phoneNumber}: ${otpCode} (for testing without Vonage)`);
+        return res.status(200).json({ success: true, message: "OTP generated (Vonage not configured)." });
+    }
 
     const responseData = await vonage.sms.send({ to: toPhoneNumberE164, from: fromPhoneNumber, text: smsText });
 
@@ -78,9 +87,40 @@ exports.verifyOtp = async (req, res) => {
       return res.status(400).json({ success: false, message: "Invalid or expired OTP." });
     }
 
-    await otpRecord.destroy();
+    await otpRecord.destroy(); // OTP used, delete it
 
-    res.status(200).json({ success: true, message: "OTP verified successfully!" });
+    // Find or create user after successful OTP verification
+    let user = await User.findOne({ where: { phoneNumber } });
+
+    if (!user) {
+        // If user doesn't exist, create them with a default role (e.g., 'customer')
+        // You might want to prompt for password/name during registration flow later
+        user = await User.create({
+            phoneNumber,
+            role: 'customer', // Default role for new users via OTP
+            // You might add a default password or mark as 'password_less' if needed
+        });
+        console.log(`New user ${phoneNumber} registered via OTP.`);
+    }
+
+    // Generate JWT token for the user
+    const token = jwt.sign(
+        { id: user.id, role: user.role, phoneNumber: user.phoneNumber },
+        process.env.JWT_SECRET,
+        { expiresIn: '1h' } // Token expires in 1 hour
+    );
+
+    res.status(200).json({ 
+        success: true, 
+        message: "OTP verified successfully!",
+        token,
+        user: {
+            id: user.id,
+            name: user.name, // Will be null if not set during registration
+            phoneNumber: user.phoneNumber,
+            role: user.role,
+        },
+    });
   } catch (error) {
     console.error("Error verifying OTP:", error);
     res.status(500).json({ success: false, message: "Internal server error during OTP verification." });
@@ -106,9 +146,18 @@ exports.registerOrUpdate = async (req, res) => {
     if (user) {
       await user.update({ password: hashedPassword, ipAddress });
       console.log(`User ${phoneNumber} password updated.`);
+      
+      // Generate new token after password update, as old one might be based on old user state
+      const token = jwt.sign(
+        { id: user.id, role: user.role, phoneNumber: user.phoneNumber },
+        process.env.JWT_SECRET,
+        { expiresIn: '1h' }
+      );
+
       return res.status(200).json({
         success: true,
         message: "Password updated successfully!",
+        token,
         user: { id: user.id, phoneNumber: user.phoneNumber, role: user.role },
       });
     } else {
@@ -119,9 +168,18 @@ exports.registerOrUpdate = async (req, res) => {
         ipAddress,
       });
       console.log(`New user ${phoneNumber} registered.`);
+
+      // Generate token for the newly registered user
+      const token = jwt.sign(
+        { id: user.id, role: user.role, phoneNumber: user.phoneNumber },
+        process.env.JWT_SECRET,
+        { expiresIn: '1h' }
+      );
+
       return res.status(201).json({
         success: true,
         message: "Account created successfully!",
+        token,
         user: { id: user.id, phoneNumber: user.phoneNumber, role: user.role },
       });
     }
@@ -171,10 +229,18 @@ exports.login = async (req, res) => {
       return res.status(401).json({ success: false, message: "Invalid phone number or password." });
     }
 
+    // Generate JWT token on successful login
+    const token = jwt.sign(
+        { id: user.id, role: user.role, phoneNumber: user.phoneNumber },
+        process.env.JWT_SECRET,
+        { expiresIn: '1h' } // Token expires in 1 hour
+    );
+
     res.status(200).json({
       success: true,
       message: "Login successful!",
-      user: { id: user.id, phoneNumber: user.phoneNumber, role: user.role },
+      token, // Send token to frontend
+      user: { id: user.id, phoneNumber: user.phoneNumber, role: user.role, name: user.name }, // Include user name
     });
   } catch (error) {
     console.error("Error during login:", error);
@@ -182,10 +248,52 @@ exports.login = async (req, res) => {
   }
 };
 
+// NEW: Verify Token endpoint for persistent login
+exports.verifyToken = async (req, res) => {
+    const { token, phoneNumber } = req.body; // Expect token and phoneNumber from frontend
+
+    if (!token || !phoneNumber) {
+        return res.status(400).json({ success: false, message: 'Token and phone number are required.' });
+    }
+
+    try {
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+
+        // Ensure the decoded token matches the provided phone number
+        if (decoded.phoneNumber !== phoneNumber) {
+            return res.status(401).json({ success: false, message: 'Token does not match user.' });
+        }
+
+        const user = await User.findByPk(decoded.id);
+        if (!user) {
+            return res.status(404).json({ success: false, message: 'User not found.' });
+        }
+
+        // Return user data (excluding password)
+        res.status(200).json({
+            success: true,
+            message: 'Token verified.',
+            user: {
+                id: user.id,
+                name: user.name,
+                phoneNumber: user.phoneNumber,
+                role: user.role,
+            },
+        });
+
+    } catch (error) {
+        console.error('Token verification failed:', error.message);
+        // Handle various JWT errors (e.g., TokenExpiredError, JsonWebTokenError)
+        return res.status(401).json({ success: false, message: 'Invalid or expired token.' });
+    }
+};
+
 // ✅ NEW: Function to get user profile data
 exports.getUserProfile = async (req, res) => {
   try {
-    const { phoneNumber } = req.query; // Assuming phoneNumber is passed as a query parameter
+    // Get phone number from authenticated user (assuming middleware sets req.user or from query)
+    // For this example, we'll continue to use query param as per your original code
+    const { phoneNumber } = req.query; 
     if (!phoneNumber) {
       return res.status(400).json({ success: false, message: "Phone number is required." });
     }

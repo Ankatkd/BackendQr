@@ -17,7 +17,7 @@ const io = new Server(server, {
   cors: {
     // ⭐ FIX: Allow connections from your frontend's IP address (port 3000)
     // For local development on your network, use your computer's IP address
-    origin: ["http://localhost:3000", "http://192.168.8.58:3000"], // Add your computer's IP for phone access
+    origin: ["http://localhost:3000"], // Add your computer's IP for phone access
     // Or for broadest testing (not recommended for production):
     // origin: "*", 
     methods: ["GET", "POST", "PUT", "DELETE"]
@@ -52,6 +52,9 @@ const orderRoutes = require("./routes/order");
 const authRoutes = require("./routes/auth");
 const feedbackRoutes = require("./routes/feedback"); // ✅ NEW: Import Feedback routes
 const reportRoutes = require("./routes/reportRoutes");     // ✅ NEW: Import Report routes
+
+// Import orderController to access the new cancellation function
+const orderController = require("./controllers/orderController");
 
 // Mount Routes
 app.use("/api/auth", authRoutes);
@@ -88,7 +91,11 @@ const syncDatabase = async () => {
     console.log("✅ All Database Models Synced");
 
     server.listen(PORT, '0.0.0.0', () => { // Make sure '0.0.0.0' is present here
-  console.log(`🚀 Server running on port ${PORT} (accessible via local network IP)`);
+      console.log(`🚀 Server running on port ${PORT} (accessible via local network IP)`);
+      // Schedule the automatic order cancellation task
+      // Runs every 15 minutes (15 * 60 * 1000 milliseconds)
+      setInterval(orderController.cancelOldUnservedOrders, 15 * 60 * 1000); 
+      console.log("Scheduled automatic old order cancellation every 15 minutes.");
     });
   } catch (err) {
     console.error("❌ Unable to connect to the database or sync models:", err);
