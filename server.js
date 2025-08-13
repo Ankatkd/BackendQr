@@ -1,4 +1,3 @@
-// backend/server.js
 const express = require("express");
 const dotenv = require("dotenv");
 const cors = require("cors");
@@ -11,20 +10,32 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 5000;
 
+const allowedOrigins = [
+  "http://localhost:3000", // Local dev
+  "https://frontend-qr-sable.vercel.app" // Vercel deployed frontend
+];
+
+// Apply CORS for API routes
+app.use(cors({
+  origin: allowedOrigins,
+  methods: ["GET", "POST", "PUT", "DELETE"],
+  credentials: true
+}));
+
+app.use(express.json());
+
 const server = http.createServer(app);
 
+// Apply same CORS config for Socket.IO
 const io = new Server(server, {
   cors: {
-    // ⭐ FIX: Allow connections from your frontend's IP address (port 3000)
-    // For local development on your network, use your computer's IP address
-    origin: ["http://localhost:3000",
-    "https://frontend-qr-sable.vercel.app" ]// Or for broadest testing (not recommended for production):
-    // origin: "*", 
-    methods: ["GET", "POST", "PUT", "DELETE"]
+    origin: allowedOrigins,
+    methods: ["GET", "POST", "PUT", "DELETE"],
+    credentials: true
   }
 });
 
-module.exports.io = io; 
+module.exports.io = io;
 
 io.on('connection', (socket) => {
   console.log('A user connected:', socket.id);
@@ -36,65 +47,53 @@ io.on('connection', (socket) => {
 // Import Models
 const User = require("./models/user.model");
 const Order = require("./models/orders");
-const { Payment } = require("./models/payment"); // Destructure Payment as it's an object now
+const { Payment } = require("./models/payment");
 const Table = require("./models/tables");
 const Coupon = require("./models/coupon");
 const Otp = require("./models/otp.model");
-const Feedback = require("./models/feedback.model"); // ✅ NEW: Import Feedback model
-
-app.use(cors());
-app.use(express.json());
+const Feedback = require("./models/feedback.model");
 
 // Import Routes
 const paymentRoutes = require("./routes/payment");
 const couponRoutes = require("./routes/coupon");
 const orderRoutes = require("./routes/order");
 const authRoutes = require("./routes/auth");
-const feedbackRoutes = require("./routes/feedback"); // ✅ NEW: Import Feedback routes
-const reportRoutes = require("./routes/reportRoutes");     // ✅ NEW: Import Report routes
+const feedbackRoutes = require("./routes/feedback");
+const reportRoutes = require("./routes/reportRoutes");
 
-// Import orderController to access the new cancellation function
 const orderController = require("./controllers/orderController");
 
 // Mount Routes
 app.use("/api/auth", authRoutes);
 app.use("/api/payment", paymentRoutes);
 app.use("/api/coupons", couponRoutes);
-app.use("/api/order", orderRoutes); 
-app.use("/api/feedback", feedbackRoutes); // ✅ NEW: Mount Feedback routes
-app.use("/api/reports", reportRoutes);   // ✅ NEW: Mount Report routes
+app.use("/api/order", orderRoutes);
+app.use("/api/feedback", feedbackRoutes);
+app.use("/api/reports", reportRoutes);
 
 app.get("/", (req, res) => {
   res.send("QRMenu Backend API is running!");
 });
 
+// Database sync & server start
 const syncDatabase = async () => {
   try {
     await sequelize.authenticate();
     console.log("✅ Database connection has been established successfully.");
 
-    // Sync all models. Order matters for foreign keys if any.
     await User.sync({ alter: true });
     await Order.sync({ alter: true });
     await Payment.sync({ alter: true });
-    // ⭐ FIX: Use force: true for Table.sync to ensure a clean recreation.
-    // WARNING: This will drop and recreate the 'tables' table on every server restart,
-    // losing all existing data in that table. DO NOT USE IN PRODUCTION.
-    await Table.sync({ force: true }); 
-    // ⭐ FIX: Use force: true for Coupon.sync to ensure a clean recreation.
-    // WARNING: This will drop and recreate the 'coupons' table on every server restart,
-    // losing all existing data in that table. DO NOT USE IN PRODUCTION.
-    await Coupon.sync({ force: true }); 
+    await Table.sync({ force: true });
+    await Coupon.sync({ force: true });
     await Otp.sync({ alter: true });
-    await Feedback.sync({ alter: true }); // ✅ NEW: Sync Feedback model
+    await Feedback.sync({ alter: true });
 
     console.log("✅ All Database Models Synced");
 
-    server.listen(PORT, '0.0.0.0', () => { // Make sure '0.0.0.0' is present here
+    server.listen(PORT, '0.0.0.0', () => {
       console.log(`🚀 Server running on port ${PORT} (accessible via local network IP)`);
-      // Schedule the automatic order cancellation task
-      // Runs every 15 minutes (15 * 60 * 1000 milliseconds)
-      setInterval(orderController.cancelOldUnservedOrders, 15 * 60 * 1000); 
+      setInterval(orderController.cancelOldUnservedOrders, 15 * 60 * 1000);
       console.log("Scheduled automatic old order cancellation every 15 minutes.");
     });
   } catch (err) {
