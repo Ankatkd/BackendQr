@@ -12,7 +12,7 @@ const PORT = process.env.PORT || 5000;
 
 const allowedOrigins = [
   "http://localhost:3000", // Local dev
-  "https://frontend-qr-sable.vercel.app" // Vercel deployed frontend
+  "https://frontend-qr-ankafybca1-gmailcoms-projects.vercel.app/auth-choice" // Vercel deployed frontend
 ];
 
 // Apply CORS for API routes
