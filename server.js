@@ -17,8 +17,8 @@ const io = new Server(server, {
   cors: {
     // ⭐ FIX: Allow connections from your frontend's IP address (port 3000)
     // For local development on your network, use your computer's IP address
-    origin: ["http://localhost:3000"], // Add your computer's IP for phone access
-    // Or for broadest testing (not recommended for production):
+    origin: ["http://localhost:3000",
+    "https://frontend-qr-sable.vercel.app" ]// Or for broadest testing (not recommended for production):
     // origin: "*", 
     methods: ["GET", "POST", "PUT", "DELETE"]
   }
